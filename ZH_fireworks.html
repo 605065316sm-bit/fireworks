@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>ZH</title>
+  <style>
+    html,body{margin:0;height:100%;background:#000;overflow:hidden;}
+    canvas{display:block;width:100vw;height:100vh;}
+    .hint{
+      position:fixed;left:0;right:0;top:18px;
+      text-align:center;font:600 14px/1.4 -apple-system,BlinkMacSystemFont,"PingFang SC","Segoe UI",Roboto,Arial;
+      color:rgba(255,255,255,.75);pointer-events:none;
+    }
+    .btn{
+      position:fixed;left:50%;transform:translateX(-50%);
+      bottom:22px;padding:10px 14px;border-radius:999px;
+      border:1px solid rgba(255,255,255,.25);
+      background:rgba(0,0,0,.35);backdrop-filter: blur(8px);
+      color:#fff;font:600 14px/1 -apple-system,BlinkMacSystemFont,"PingFang SC","Segoe UI",Roboto,Arial;
+    }
+  </style>
+</head>
+<body>
+  <div class="hint">ZH（点一下屏幕也会放烟花）</div>
+  <button class="btn" id="boomBtn">再来一波 ✨</button>
+  <canvas id="c"></canvas>
+
+<script>
+(() => {
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d', { alpha: false });
+
+  const DPR = Math.min(2, window.devicePixelRatio || 1);
+  let W = 0, H = 0;
+
+  function resize() {
+    W = Math.floor(window.innerWidth * DPR);
+    H = Math.floor(window.innerHeight * DPR);
+    canvas.width = W;
+    canvas.height = H;
+    canvas.style.width = window.innerWidth + 'px';
+    canvas.style.height = window.innerHeight + 'px';
+  }
+  window.addEventListener('resize', resize, { passive: true });
+  resize();
+
+  // ---- utils
+  const rand = (a,b) => a + Math.random()*(b-a);
+  const clamp = (x,a,b) => Math.max(a, Math.min(b, x));
+  const now = () => performance.now();
+
+  // ---- particles
+  const particles = [];
+  const rockets = [];
+
+  function addParticle(p){ particles.push(p); }
+
+  function makeSpark(x,y,vx,vy,life,hue,size=2,alpha=1,gravity=0.06,drag=0.985) {
+    return {x,y,vx,vy,life,ttl:life,hue,size,alpha,gravity,drag};
+  }
+
+  function launchRocket(x, targetY, kind="burst") {
+    const vy = -rand(7.5, 10.5);
+    const vx = rand(-1.2, 1.2);
+    rockets.push({
+      x, y: H + rand(10, 80),
+      vx, vy,
+      targetY,
+      kind,
+      hue: rand(0, 360),
+      born: now()
+    });
+  }
+
+  // ---- shapes (heart + text points)
+  function heartPoints(cx, cy, scale, count=220) {
+    const pts = [];
+    for (let i=0;i<count;i++){
+      const t = (i / count) * Math.PI * 2;
+      // classic heart parametric
+      const x = 16 * Math.pow(Math.sin(t),3);
+      const y = 13*Math.cos(t) - 5*Math.cos(2*t) - 2*Math.cos(3*t) - Math.cos(4*t);
+      pts.push([cx + (x*scale), cy - (y*scale)]);
+    }
+    return pts;
+  }
+
+  function textPoints(text, cx, cy, fontSize, density=4) {
+    const off = document.createElement('canvas');
+    const octx = off.getContext('2d');
+    off.width = Math.floor(W);
+    off.height = Math.floor(H);
+
+    octx.clearRect(0,0,off.width,off.height);
+    octx.fillStyle = '#fff';
+    octx.textAlign = 'center';
+    octx.textBaseline = 'middle';
+    octx.font = `800 ${fontSize}px -apple-system,BlinkMacSystemFont,"PingFang SC","Segoe UI",Roboto,Arial`;
+    octx.fillText(text, cx, cy);
+
+    const img = octx.getImageData(0,0,off.width,off.height).data;
+    const pts = [];
+    for (let y=0; y<off.height; y+=density){
+      for (let x=0; x<off.width; x+=density){
+        const idx = (y*off.width + x)*4;
+        if (img[idx+3] > 180) pts.push([x,y]);
+      }
+    }
+    return pts;
+  }
+
+  function explodeToPoints(pts, hue, strength=6.2, spread=0.9) {
+    // start from center of points
+    let minX=1e9,maxX=-1e9,minY=1e9,maxY=-1e9;
+    for (const [x,y] of pts){ minX=Math.min(minX,x); maxX=Math.max(maxX,x); minY=Math.min(minY,y); maxY=Math.max(maxY,y); }
+    const cx=(minX+maxX)/2, cy=(minY+maxY)/2;
+
+    for (const [x,y] of pts){
+      const dx = x - cx, dy = y - cy;
+      const ang = Math.atan2(dy, dx);
+      const dist = Math.hypot(dx, dy);
+      const v = strength * (0.35 + dist / Math.max(80*DPR, dist+1));
+      const vx = Math.cos(ang) * v + rand(-spread, spread);
+      const vy = Math.sin(ang) * v + rand(-spread, spread);
+      addParticle(makeSpark(cx, cy, vx, vy, rand(55, 90), hue, rand(1.5, 2.6), 1, 0.055, 0.985));
+    }
+  }
+
+  function burst(x,y,hue){
+    const n = Math.floor(rand(120, 220));
+    for (let i=0;i<n;i++){
+      const a = (i/n) * Math.PI*2;
+      const sp = rand(2.2, 6.8);
+      const vx = Math.cos(a) * sp + rand(-0.6, 0.6);
+      const vy = Math.sin(a) * sp + rand(-0.6, 0.6);
+      addParticle(makeSpark(x,y,vx,vy,rand(50,85),hue,rand(1.4,2.4),1,0.06,0.985));
+    }
+  }
+
+  function heartBoom(x,y){
+    const hue = 340; // pink/red
+    const pts = heartPoints(x, y, 2.3*DPR, 260);
+    explodeToPoints(pts, hue, 6.0, 0.8);
+    // add a soft core burst
+    burst(x,y, hue);
+  }
+
+  function zhBoom(x,y){
+    const hue = rand(190, 230); // blue-ish
+    const pts = textPoints("ZH", x, y, 140*DPR, 4);
+    explodeToPoints(pts, hue, 6.6, 0.9);
+    // glitter
+    for (let i=0;i<160;i++){
+      const a = rand(0, Math.PI*2);
+      const sp = rand(0.8, 5.0);
+      addParticle(makeSpark(x,y,Math.cos(a)*sp,Math.sin(a)*sp,rand(35,60), hue+rand(-15,15), rand(1.2,2.1), 0.9, 0.04, 0.988));
+    }
+  }
+
+  // ---- show
+  function fadeBackground() {
+    // slight trail
+    ctx.fillStyle = 'rgba(0,0,0,0.18)';
+    ctx.fillRect(0,0,W,H);
+  }
+
+  function drawSpark(p){
+    const t = p.life / p.ttl;
+    const a = clamp(p.alpha * t, 0, 1);
+    ctx.beginPath();
+    ctx.fillStyle = `hsla(${p.hue},100%,60%,${a})`;
+    ctx.arc(p.x, p.y, p.size, 0, Math.PI*2);
+    ctx.fill();
+  }
+
+  function step() {
+    fadeBackground();
+
+    // rockets
+    for (let i=rockets.length-1;i>=0;i--){
+      const r = rockets[i];
+      r.x += r.vx * DPR;
+      r.y += r.vy * DPR;
+      r.vy += 0.035 * DPR; // gravity
+
+      // rocket trail
+      for (let k=0;k<3;k++){
+        addParticle(makeSpark(r.x, r.y, rand(-0.6,0.6), rand(0.2,1.6), rand(18,30), r.hue+rand(-10,10), rand(1.0,1.8), 0.9, 0.02, 0.92));
+      }
+
+      // draw rocket head
+      ctx.beginPath();
+      ctx.fillStyle = `hsla(${r.hue},100%,70%,0.9)`;
+      ctx.arc(r.x, r.y, 2.2*DPR, 0, Math.PI*2);
+      ctx.fill();
+
+      if (r.y <= r.targetY) {
+        rockets.splice(i,1);
+        if (r.kind === "heart") heartBoom(r.x, r.y);
+        else if (r.kind === "zh") zhBoom(r.x, r.y);
+        else burst(r.x, r.y, r.hue);
+      }
+    }
+
+    // particles
+    for (let i=particles.length-1;i>=0;i--){
+      const p = particles[i];
+      p.x += p.vx * DPR;
+      p.y += p.vy * DPR;
+      p.vx *= p.drag;
+      p.vy *= p.drag;
+      p.vy += p.gravity * DPR;
+      p.life -= 1;
+
+      drawSpark(p);
+
+      if (p.life <= 0 || p.x < -50 || p.x > W+50 || p.y > H+60) {
+        particles.splice(i,1);
+      }
+    }
+
+    requestAnimationFrame(step);
+  }
+
+  // ---- choreography
+  function showSequence() {
+    const cx = W*0.5, cy = H*0.42;
+
+    // 1) a few normal bursts
+    for (let i=0;i<3;i++){
+      setTimeout(() => launchRocket(rand(W*0.25,W*0.75), rand(H*0.18,H*0.32), "burst"), i*520);
+    }
+
+    // 2) heart
+    setTimeout(() => launchRocket(cx, cy, "heart"), 1700);
+
+    // 3) ZH
+    setTimeout(() => launchRocket(cx, H*0.33, "zh"), 2600);
+
+    // 4) finale
+    setTimeout(() => {
+      for (let i=0;i<6;i++){
+        launchRocket(rand(W*0.15,W*0.85), rand(H*0.14,H*0.38), (i%2? "burst":"burst"));
+      }
+    }, 3400);
+  }
+
+  // first frame fill
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0,0,W,H);
+  step();
+  showSequence();
+
+  // interactions
+  const boomBtn = document.getElementById('boomBtn');
+  boomBtn.addEventListener('click', () => showSequence(), { passive: true });
+
+  window.addEventListener('pointerdown', (e) => {
+    const x = e.clientX * DPR;
+    const y = e.clientY * DPR;
+    // tap gives a quick heart + burst
+    heartBoom(x, y);
+    burst(x, y, rand(0,360));
+  }, { passive: true });
+})();
+</script>
+</body>
+</html>
